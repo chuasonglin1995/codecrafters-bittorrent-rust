@@ -1,9 +1,26 @@
-use serde_json;
+use anyhow::Context;
 use core::panic;
-use std::env;
+use clap::{Parser, Subcommand};
+use bittorrent_starter_rust::torrent::{Keys, Torrent};
+use serde_bencode;
 
-// Available if you need it!
-// use serde_bencode
+#[derive(Parser, Debug)]
+struct Args {
+    #[command(subcommand)]
+    command: Command
+}
+
+#[derive(Subcommand, Debug)]
+#[clap(rename_all = "snake_case")]
+enum Command {
+    Decode {
+        value: String,
+    },
+    Info {
+        torrent: String
+    },
+}
+
 
 #[allow(dead_code)]
 fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
@@ -68,15 +85,25 @@ fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
 }
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    let command = &args[1];
+// Usage: sh ./your_bittorrent.sh info sample.torrent 
+fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
 
-    if command == "decode" {
-        let encoded_value = &args[2];
-        let decoded_value = decode_bencoded_value(encoded_value);
-        println!("{}", decoded_value.0.to_string());
-    } else {
-        println!("unknown command: {}", args[1])
+    match args.command {
+        Command::Decode { value } => {
+            let decoded_value = decode_bencoded_value(&value);
+            println!("{}", decoded_value.0.to_string());
+        }
+        Command::Info { torrent } => {
+            let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
+            let t: Torrent = serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
+            eprintln!("{t:?}");
+            println!("Tracker URL: {}", t.announce);
+            if let Keys::SingleFile { length } = t.info.keys {
+                println!("Length: {length}");
+            }
+        }
     }
+
+    Ok(())
 }
