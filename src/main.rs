@@ -8,6 +8,7 @@ use std::env;
 fn decode_bencoded_value(encoded_value: &str) -> serde_json::Value {
     // If encoded_value starts with a digit, it's a number
     if encoded_value.chars().next().unwrap().is_digit(10) {
+
         // Example: "5:hello" -> "hello"
         let colon_index = encoded_value.find(':').unwrap();
         let number_string = &encoded_value[..colon_index];
@@ -25,13 +26,10 @@ fn main() {
     let command = &args[1];
 
     if command == "decode" {
-        // You can use print statements as follows for debugging, they'll be visible when running tests.
-        println!("Logs from your program will appear here!");
+        let encoded_value = &args[2];
+        let decoded_value = decode_bencoded_value(encoded_value);
+        println!("{}", decoded_value.to_string());
 
-        // Uncomment this block to pass the first stage
-        // let encoded_value = &args[2];
-        // let decoded_value = decode_bencoded_value(encoded_value);
-        // println!("{}", decoded_value.to_string());
     } else {
         println!("unknown command: {}", args[1])
     }
