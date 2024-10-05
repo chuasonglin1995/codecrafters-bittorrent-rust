@@ -6,6 +6,13 @@ use std::env;
 
 #[allow(dead_code)]
 fn decode_bencoded_value(encoded_value: &str) -> serde_json::Value {
+    if let Some(rest) = encoded_value.strip_prefix('i') {
+        if let Some((digits, _)) = rest.split_once('e') {
+            if let Ok(n) = digits.parse::<i64>() {
+                return serde_json::Value::Number(n.into())
+            }
+        }
+    }
     // If encoded_value starts with a digit, it's a number
     if let Some((len, rest)) = encoded_value.split_once(':') {
         if let Ok(len) = len.parse::<usize>() {
@@ -24,7 +31,6 @@ fn main() {
         let encoded_value = &args[2];
         let decoded_value = decode_bencoded_value(encoded_value);
         println!("{}", decoded_value.to_string());
-
     } else {
         println!("unknown command: {}", args[1])
     }
