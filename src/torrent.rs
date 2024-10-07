@@ -66,7 +66,7 @@ pub mod hashes {
     use std::fmt;
 
 	#[derive(Debug, Clone)]
-	pub struct Hashes(Vec<[u8; 20]>);
+	pub struct Hashes(pub Vec<[u8; 20]>);
 	struct HashesVisitor;
 
 	impl<'de> Visitor<'de> for HashesVisitor {
@@ -100,12 +100,13 @@ pub mod hashes {
 		}
 	}
 
+    // note: this hash is actually not complete, because we also need to sort the keys in alphabetical order
 	impl Serialize for Hashes {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            let single_slice = self.0.concat();
+            let single_slice = self.0.concat(); // concat is like flatten
             serializer.serialize_bytes(&single_slice)
         }
     }

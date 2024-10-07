@@ -111,6 +111,11 @@ fn main() -> anyhow::Result<()> {
             let hash_hex = format!("{:x}", hash_result);
 
             println!("Info Hash: {hash_hex}");
+            println!("Piece Length: {}", t.info.plength);
+            println!("Piece Hashes:");
+            for hash in t.info.pieces.0 {
+                println!("{}", hex::encode(&hash))
+            }
         }
     }
 
