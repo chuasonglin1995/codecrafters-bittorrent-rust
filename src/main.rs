@@ -3,6 +3,7 @@ use core::panic;
 use clap::{Parser, Subcommand};
 use bittorrent_starter_rust::torrent::{Keys, Torrent};
 use serde_bencode;
+use sha1::{Sha1, Digest};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -102,6 +103,14 @@ fn main() -> anyhow::Result<()> {
             if let Keys::SingleFile { length } = t.info.keys {
                 println!("Length: {length}");
             }
+            let info_dict = &t.info;
+            let info_dict_bytes = serde_bencode::to_bytes(info_dict).context("serialize info dict")?;
+            let mut  hasher = Sha1::new();
+            hasher.update(&info_dict_bytes);
+            let hash_result = hasher.finalize();
+            let hash_hex = format!("{:x}", hash_result);
+
+            println!("Info Hash: {hash_hex}");
         }
     }
 
