@@ -1,9 +1,10 @@
 use anyhow::Context;
-use core::panic;
-use clap::{Parser, Subcommand};
 use bittorrent_starter_rust::torrent::{Keys, Torrent};
+use bittorrent_starter_rust::tracker::TrackerRequest;
+use bittorrent_starter_rust::url_encode::url_encode;
+use clap::{Parser, Subcommand};
+use core::panic;
 use serde_bencode;
-use sha1::{Sha1, Digest};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -18,7 +19,10 @@ enum Command {
         value: String,
     },
     Info {
-        torrent: String
+        torrent: String,
+    },
+    Peers {
+        torrent: String,
     },
 }
 
@@ -86,7 +90,8 @@ fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
 }
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
-// Usage: sh ./your_bittorrent.sh info sample.torrent 
+// Usage: sh ./your_bittorrent.sh info sample.torrent
+// Usage: sh ./your_bittorrent.sh peers sample.torrent
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
@@ -103,19 +108,51 @@ fn main() -> anyhow::Result<()> {
             if let Keys::SingleFile { length } = t.info.keys {
                 println!("Length: {length}");
             }
-            let info_dict = &t.info;
-            let info_dict_bytes = serde_bencode::to_bytes(info_dict).context("serialize info dict")?;
-            let mut  hasher = Sha1::new();
-            hasher.update(&info_dict_bytes);
-            let hash_result = hasher.finalize();
-            let hash_hex = format!("{:x}", hash_result);
+            let info_hash = &t.info_hash();
+            let hash_hex = hex::encode(info_hash);
 
             println!("Info Hash: {hash_hex}");
             println!("Piece Length: {}", t.info.plength);
             println!("Piece Hashes:");
             for hash in t.info.pieces.0 {
                 println!("{}", hex::encode(&hash))
-            }
+            };
+        }
+
+        Command::Peers { torrent } => {
+            let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
+            let t: Torrent = serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
+            //let info_hash = t.info_hash();
+
+            let request = TrackerRequest {
+                peer_id: String::from("00112233445566778899"),
+                port: 6881,
+                uploaded: 0,
+                downloaded: 0,
+                left: 0,
+                compact: 1
+            };
+
+            let tracker_url = format!(
+                "{}?&info_hash={}",
+                t.announce,
+                &url_encode(&t.info_hash())
+            );
+
+            eprintln!("tracker_url is {}", tracker_url);
+            let client = reqwest::blocking::Client::new();
+            let tracker_response = client
+                .get(tracker_url)
+                .query(&request)
+                .send()
+                .await?
+                .error_for_status()?
+                .bytes()
+                .await?;
+    
+
+            println!("Tracker Response: {}", tracker_response)
+
         }
     }
 
