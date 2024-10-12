@@ -29,7 +29,7 @@ pub struct TrackerRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TrackerResponse {
 	/// An integer, indicating how often your client should make a request to the tracker in seconds
-	pub interval: u8,
+	pub interval: usize,
 	/// A string, which contains list of peers that your client can connect to.
 	/// Each peer is represented using 6 bytes. The first 4 bytes are the peer's IP address and the last 2 bytes are the peer's port number.
 	pub peers: Peers
@@ -62,11 +62,11 @@ pub mod peers {
 			}
 			Ok(Peers(
 				v.chunks_exact(6)
-					.map(|slice_6| SocketAddrV4::new(
+					.map(|slice_6| {SocketAddrV4::new(
 						Ipv4Addr::new(slice_6[0], slice_6[1], slice_6[2], slice_6[3]),
 						u16::from_be_bytes([slice_6[4], slice_6[5]]),
 						)
-					)	
+					})	
 					.collect()
 			))
 		}

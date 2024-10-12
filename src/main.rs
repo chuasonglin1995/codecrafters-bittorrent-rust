@@ -1,10 +1,12 @@
 use anyhow::Context;
 use bittorrent_starter_rust::torrent::{Keys, Torrent};
-use bittorrent_starter_rust::tracker::TrackerRequest;
+use bittorrent_starter_rust::tracker::{TrackerRequest, TrackerResponse};
 use bittorrent_starter_rust::url_encode::url_encode;
 use clap::{Parser, Subcommand};
 use core::panic;
 use serde_bencode;
+use std::path::PathBuf;
+use tokio;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -22,7 +24,7 @@ enum Command {
         torrent: String,
     },
     Peers {
-        torrent: String,
+        torrent: PathBuf,
     },
 }
 
@@ -89,10 +91,11 @@ fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
 
 }
 
-// Usage: your_bittorrent.sh decode "<encoded_value>"
+// Usage: sh ./your_bittorrent.sh decode "<encoded_value>"
 // Usage: sh ./your_bittorrent.sh info sample.torrent
 // Usage: sh ./your_bittorrent.sh peers sample.torrent
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     match args.command {
@@ -122,37 +125,46 @@ fn main() -> anyhow::Result<()> {
         Command::Peers { torrent } => {
             let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
             let t: Torrent = serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
-            //let info_hash = t.info_hash();
+            let length = if let Keys::SingleFile { length } = t.info.keys {
+                length
+            } else {
+                todo!()
+            };
 
             let request = TrackerRequest {
                 peer_id: String::from("00112233445566778899"),
                 port: 6881,
                 uploaded: 0,
                 downloaded: 0,
-                left: 0,
+                left: length,
                 compact: 1
             };
+            let url_params =
+                serde_urlencoded::to_string(&request).context("url-encode tracker parameters")?;
 
+            // put infohash here so that it wont get double url encoded
             let tracker_url = format!(
-                "{}?&info_hash={}",
+                "{}?{}&info_hash={}",
                 t.announce,
+                url_params,
                 &url_encode(&t.info_hash())
             );
 
-            eprintln!("tracker_url is {}", tracker_url);
+            eprintln!("{tracker_url}");
             let client = reqwest::blocking::Client::new();
             let tracker_response = client
                 .get(tracker_url)
-                .query(&request)
                 .send()
-                .await?
-                .error_for_status()?
+                .context("send request to tracker")?
                 .bytes()
-                .await?;
-    
+                .context("convert response to bytes")?;
 
-            println!("Tracker Response: {}", tracker_response)
-
+            eprintln!("{:?}", tracker_response);
+            let response: TrackerResponse =
+                serde_bencode::from_bytes(&tracker_response).context("parse tracker response")?;
+            for peer in &response.peers.0 {
+                println!("{}:{}", peer.ip(), peer.port());
+            }
         }
     }
 

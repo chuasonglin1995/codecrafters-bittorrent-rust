@@ -14,21 +14,23 @@ pub struct Torrent {
 
 impl Torrent {
     pub fn info_hash(&self) -> [u8; 20] {
-        let info_dict_bytes = serde_bencode::to_bytes(&self.info).expect("re-encode info section should be fine");
-        let mut  hasher = Sha1::new();
-        hasher.update(&info_dict_bytes);
-        let info_hash =  hasher.finalize();
-        info_hash
+        let info_encoded =
+            serde_bencode::to_bytes(&self.info).expect("re-encode info section should be fine");
+        let mut hasher = Sha1::new();
+        hasher.update(&info_encoded);
+        hasher
+            .finalize()
             .try_into()
-            .expect("GenericArray should be able to be converted")
+            .expect("GenericArray<_, 20> == [_; 20]")
     }
-
-    // pub fn info_hash_try(&self) -> String {
+    // pub fn info_hash(&self) -> [u8; 20] {
     //     let info_dict_bytes = serde_bencode::to_bytes(&self.info).expect("re-encode info section should be fine");
-    //     let mut  hasher = Sha1::new();
+    //     let mut hasher = Sha1::new();
     //     hasher.update(&info_dict_bytes);
     //     let info_hash =  hasher.finalize();
-    //     url_encode(&info_hash)
+    //     info_hash
+    //         .try_into()
+    //         .expect("GenericArray should be able to be converted")
     // }
 }
 
@@ -78,7 +80,6 @@ pub struct File {
     // Subdirectory names for this file
     pub path:Vec<String>,
 }
-
 
 pub mod hashes {
     use serde::de::{self, Deserialize, Deserializer, Visitor};
