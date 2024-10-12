@@ -1,4 +1,5 @@
 use anyhow::Context;
+use bittorrent_starter_rust::handshake::send_handshake;
 use bittorrent_starter_rust::torrent::{Keys, Torrent};
 use bittorrent_starter_rust::tracker::{TrackerRequest, TrackerResponse};
 use bittorrent_starter_rust::url_encode::url_encode;
@@ -21,10 +22,14 @@ enum Command {
         value: String,
     },
     Info {
-        torrent: String,
+        torrent: PathBuf,
     },
     Peers {
-        torrent: String,
+        torrent: PathBuf,
+    },
+    Handshake {
+        torrent: PathBuf,
+        peer_addr: String,
     },
 }
 
@@ -167,7 +172,15 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
+        Command::Handshake { torrent, peer_addr } => {
+            let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
+            let t: Torrent = serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
+            let handshake_response = send_handshake(&peer_addr, t.info_hash(), *b"00112233445566778899").await?;
 
+            eprintln!("{:?}", handshake_response);
+            let peer_id_hex = hex::encode(handshake_response.peer_id);
+            println!("Peer ID: {}", peer_id_hex);
+        }
     }
 
     Ok(())
