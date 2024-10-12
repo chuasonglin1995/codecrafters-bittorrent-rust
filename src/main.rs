@@ -24,7 +24,7 @@ enum Command {
         torrent: String,
     },
     Peers {
-        torrent: PathBuf,
+        torrent: String,
     },
 }
 
@@ -166,6 +166,8 @@ async fn main() -> anyhow::Result<()> {
                 println!("{}:{}", peer.ip(), peer.port());
             }
         }
+
+
     }
 
     Ok(())
