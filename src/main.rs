@@ -1,5 +1,5 @@
 use anyhow::Context;
-use bittorrent_starter_rust::handshake::send_handshake;
+use bittorrent_starter_rust::peer::send_handshake;
 use bittorrent_starter_rust::torrent::{Keys, Torrent};
 use bittorrent_starter_rust::tracker::{TrackerRequest, TrackerResponse};
 use bittorrent_starter_rust::url_encode::url_encode;
@@ -31,6 +31,12 @@ enum Command {
         torrent: PathBuf,
         peer_addr: String,
     },
+    DownloadPiece {
+        #[clap(short, long)]
+        output: PathBuf,
+        torrent: PathBuf,
+        piece_index: u32
+    }
 }
 
 
@@ -180,6 +186,20 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("{:?}", handshake_response);
             let peer_id_hex = hex::encode(handshake_response.peer_id);
             println!("Peer ID: {}", peer_id_hex);
+        }
+
+        // Usage: sh ./your_bittorrent.sh download_piece -o /tmp/test-piece-0 sample.torrent 0
+        Command::DownloadPiece { output, torrent, piece_index } => {
+            let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
+            let t: Torrent = serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
+
+
+            // send handshake
+            // wait for bitfield messsage (5)
+            // send an interested message (2)
+            // wait until we receive an unchoke message (1)
+            // break the piece into blocks of 16kiB and send a request message for each block (6)
+            // wait for a piece message for each block you requested (7)
         }
     }
 
