@@ -5,57 +5,62 @@ use crate::{peer::PeerMessage, torrent::{Info, Keys}};
 
 // Many blocks form a piece
 // Many pieces form a whole file
-pub async fn download_piece(mut stream: TcpStream, piece_index: u32, meta_info: &Info) -> Result<Vec<u8>, std::io::Error> {
+pub async fn download_whole_file(stream: &mut TcpStream, meta_info: &Info) -> Result<Vec<u8>, std::io::Error> {
+    let mut file_data = Vec::new();
+    let num_pieces = meta_info.pieces.0.len();
+    eprintln!("Downloading file with {} pieces", num_pieces);
+    for i in 0..num_pieces as u32 {
+        eprintln!("Starting download for piece: {}", i);
+        let piece_data = download_piece(stream, i, meta_info).await?;
+        file_data.extend_from_slice(&piece_data);
+        eprintln!("Finished download for piece: {}", i);
+    }
+    Ok(file_data)
+} 
 
-    // expect first message to be a bitfield message
-    assert!(matches!(
-        PeerMessage::read(&mut stream).await?,
-        PeerMessage::Bitfield(_)
-    ));
 
-    // send an interested message
-    PeerMessage::Interested.write(&mut stream).await?;
+pub async fn download_piece(stream: &mut TcpStream, piece_index: u32, meta_info: &Info) -> Result<Vec<u8>, std::io::Error> {
 
-    // expect the next message to be an unchoke message
-    assert!(matches!(
-        PeerMessage::read(&mut stream).await?,
-        PeerMessage::Unchoke
-    ));
-
-    eprintln!("{:?}", meta_info);
     const BLOCK_SIZE: u32 = 16 << 10; // 16 KiB
 
     let piece_size = get_piece_size(piece_index, meta_info);
     let block_sizes = get_block_sizes(piece_size, BLOCK_SIZE);
 
-    let mut piece_data = Vec::new();
+    // Initialize a vector of vectors for each block
+    //  [ 
+    //    [], <--block_sizes[0] 
+    //    [], <--block_sizes[1] 
+    //    [], <--block_sizes[2] 
+    // ]
+    let mut piece_data: Vec<Vec<u8>> = block_sizes.iter().map(|&size| Vec::with_capacity(size as usize)).collect();
     let mut offset = 0;
-    for block_length in block_sizes {
+    for &block_length in &block_sizes {
         PeerMessage::Request { 
             index: piece_index, 
             begin: offset, 
             length: block_length
-        }.write(&mut stream).await?;
-        eprintln!("Requesting block - index: {}, begin: {}, length: {}", piece_index, offset, block_length);
+        }.write( stream).await?;
+        offset += block_length;
+    }
 
-        let piece_message = PeerMessage::read(&mut stream).await?;
-
-        if let PeerMessage::Piece { index, begin, block } = piece_message {
-            piece_data.extend_from_slice(&block);
-            offset += block_length;
+    for i in 0..block_sizes.len() {
+        let piece_message = PeerMessage::read(stream).await?;
+        if let PeerMessage::Piece { index:_, begin: _, block } = piece_message {
+            piece_data[i] = block;
         }
     }
+
+    let piece = piece_data.into_iter().flatten().collect::<Vec<u8>>();
         
     // validate hash
     let mut hasher = Sha1::new();
-    hasher.update(&piece_data);
+    hasher.update(&piece);
     let piece_hash = hasher.finalize();
     let expected_piece_hash = &meta_info.pieces.0[piece_index as usize];
 
     assert_eq!(piece_hash.encode_hex::<String>(), expected_piece_hash.encode_hex::<String>());
-    eprintln!("Validated!");
 
-    Ok(piece_data)
+    Ok(piece)
 
 }
 

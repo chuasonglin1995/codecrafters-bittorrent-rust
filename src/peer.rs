@@ -128,6 +128,22 @@ pub async fn connect_to_peer(
     let mut response = vec![0; 68]; // Handshake response is 68 bytes
     stream.read_exact(&mut response).await?;
 
+    // expect first message to be a bitfield message
+    assert!(matches!(
+        PeerMessage::read(&mut stream).await?,
+        PeerMessage::Bitfield(_)
+    ));
+
+    // send an interested message
+    PeerMessage::Interested.write(&mut stream).await?;
+
+    // expect the next message to be an unchoke message
+    assert!(matches!(
+        PeerMessage::read(&mut stream).await?,
+        PeerMessage::Unchoke
+    ));
+    
+
     Ok(stream)
 }
 
@@ -148,28 +164,22 @@ impl PeerMessage {
 
         let message = match message_id {
             Self::MSG_ID_CHOKE => {
-                eprintln!("Received Choke message");
                 PeerMessage::Choke
             },
             Self::MSG_ID_UNCHOKE => {
-                eprintln!("Received Unchoke message");
                 PeerMessage::Unchoke
             },
             Self::MSG_ID_INTERESTED => {
-                eprintln!("Received Interested message");
                 PeerMessage::Interested
             },
             Self::MSG_ID_NOT_INTERESTED => {
-                eprintln!("Received Not Interested message");
                 PeerMessage::NotInterested
             },
             Self::MSG_ID_HAVE => {
-                assert_eq!(message_size, 5, "Invalid have message size");
                 let piece_id = reader.read_u32().await?;
                 PeerMessage::Have(piece_id)
             }
             Self::MSG_ID_BIT_FIELD => {
-                eprintln!("Received bitfield message");
                 // Its payload is a bitfield with each index that downloader has sent set to one and the rest set to zero.
                 // Downloaders which don't have anything yet may skip the 'bitfield' message.
                 // The first byte of the bitfield corresponds to indices 0 - 7 from high bit to low bit, respectively.
@@ -180,7 +190,6 @@ impl PeerMessage {
                 PeerMessage::Bitfield(block)
             }
             Self::MSG_ID_REQUEST => {
-                eprintln!("Received request message");
                 let index = reader.read_u32().await?;
                 let begin = reader.read_u32().await?;
                 let length = reader.read_u32().await?;
@@ -195,7 +204,6 @@ impl PeerMessage {
                 let begin = reader.read_u32().await?;
                 let mut block = vec![0; (message_size - 9) as usize];
                 reader.read_exact(&mut block).await?;
-                eprintln!("index: {}, begin: {}", index, begin);
                 PeerMessage::Piece {
                     index,
                     begin,
@@ -216,7 +224,6 @@ impl PeerMessage {
                 // }
             }
             Self::MSG_ID_CANCEL => {
-                eprintln!("Received cancel message");
                 let index = reader.read_u32().await?;
                 let begin = reader.read_u32().await?;
                 let length = reader.read_u32().await?;
@@ -247,30 +254,24 @@ impl PeerMessage {
             PeerMessage::Unchoke => {
                 writer.write_u32(1).await?;
                 writer.write_u8(Self::MSG_ID_UNCHOKE).await?;
-                eprintln!("Sent Unchoke message");
             }
             PeerMessage::Interested => {
                 writer.write_u32(1).await?;
                 writer.write_u8(Self::MSG_ID_INTERESTED).await?;
-                eprintln!("Sent Interested message");
-
             }
             PeerMessage::NotInterested => {
                 writer.write_u32(1).await?;
                 writer.write_u8(Self::MSG_ID_NOT_INTERESTED).await?;
-                eprintln!("Sent NotInterested message");
             }
             PeerMessage::Have(piece_id) => {
                 writer.write_u32(5).await?;
                 writer.write_u8(Self::MSG_ID_HAVE).await?;
                 writer.write_u32(*piece_id).await?;
-                eprintln!("Sent Have message");
             }
             PeerMessage::Bitfield(block) => {
                 writer.write_u32((block.len() + 1) as u32).await?;
                 writer.write_u8(Self::MSG_ID_BIT_FIELD).await?;
                 writer.write_all(&block).await?;
-                eprintln!("Sent Bitfield message");
             }
             PeerMessage::Request { index, begin, length } => {
                 writer.write_u32(13).await?;
@@ -278,7 +279,6 @@ impl PeerMessage {
                 writer.write_u32(*index).await?;
                 writer.write_u32(*begin).await?;
                 writer.write_u32(*length).await?;
-                eprintln!("Sent Request message");
             }
             PeerMessage::Piece { index, begin, block } => {
                 writer.write_u32((block.len() + 9) as u32).await?;
@@ -286,7 +286,6 @@ impl PeerMessage {
                 writer.write_u32(*index).await?;
                 writer.write_u32(*begin).await?;
                 writer.write_all(&block).await?;
-                eprintln!("Sent Piece message");
             }
             PeerMessage::Cancel { index, begin, length } => {
                 writer.write_u32(13).await?;
@@ -294,7 +293,6 @@ impl PeerMessage {
                 writer.write_u32(*index).await?;
                 writer.write_u32(*begin).await?;
                 writer.write_u32(*length).await?;
-                eprintln!("Sent Cancel message");
             }
         };
 
