@@ -1,9 +1,15 @@
 use anyhow::Context;
-use core::panic;
-use clap::{Parser, Subcommand};
+use bittorrent_starter_rust::download::{download_piece, download_whole_file};
+use bittorrent_starter_rust::peer::{self, send_handshake};
 use bittorrent_starter_rust::torrent::{Keys, Torrent};
+use bittorrent_starter_rust::tracker::get_peers;
+use clap::{Parser, Subcommand};
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
+use core::panic;
 use serde_bencode;
-use sha1::{Sha1, Digest};
+use std::path::PathBuf;
+use tokio;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -18,8 +24,26 @@ enum Command {
         value: String,
     },
     Info {
-        torrent: String
+        torrent: PathBuf,
     },
+    Peers {
+        torrent: PathBuf,
+    },
+    Handshake {
+        torrent: PathBuf,
+        peer_addr: String,
+    },
+    DownloadPiece {
+        #[clap(short, long)]
+        output: PathBuf,
+        torrent: PathBuf,
+        piece_index: u32
+    },
+    Download {
+        #[clap(short, long)]
+        output: PathBuf,
+        torrent: PathBuf,
+    }
 }
 
 
@@ -85,16 +109,20 @@ fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
 
 }
 
-// Usage: your_bittorrent.sh decode "<encoded_value>"
-// Usage: sh ./your_bittorrent.sh info sample.torrent 
-fn main() -> anyhow::Result<()> {
+// 
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     match args.command {
+
+        // Usage: sh ./your_bittorrent.sh decode "<encoded_value>"
         Command::Decode { value } => {
             let decoded_value = decode_bencoded_value(&value);
             println!("{}", decoded_value.0.to_string());
         }
+
+        // Usage: sh ./your_bittorrent.sh info sample.torrent
         Command::Info { torrent } => {
             let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
             let t: Torrent = serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
@@ -103,21 +131,100 @@ fn main() -> anyhow::Result<()> {
             if let Keys::SingleFile { length } = t.info.keys {
                 println!("Length: {length}");
             }
-            let info_dict = &t.info;
-            let info_dict_bytes = serde_bencode::to_bytes(info_dict).context("serialize info dict")?;
-            let mut  hasher = Sha1::new();
-            hasher.update(&info_dict_bytes);
-            let hash_result = hasher.finalize();
-            let hash_hex = format!("{:x}", hash_result);
+            let info_hash = &t.info_hash();
+            let hash_hex = hex::encode(info_hash);
 
             println!("Info Hash: {hash_hex}");
             println!("Piece Length: {}", t.info.plength);
             println!("Piece Hashes:");
             for hash in t.info.pieces.0 {
                 println!("{}", hex::encode(&hash))
+            };
+        }
+
+        // Usage: sh ./your_bittorrent.sh peers sample.torrent
+        Command::Peers { torrent } => {
+            let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
+            let t: Torrent = serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
+            let peers = get_peers(
+                String::from("00112233445566778899"),
+                &t
+            ).await?;
+            for peer in &peers.0 {
+                println!("{}:{}", peer.ip(), peer.port());
             }
+        }
+
+        // Usage: sh ./your_bittorrent.sh handshake sample.torrent <peer_ip>:<peer_port>
+        // E.g. sh ./your_bittorrent.sh handshake sample.torrent 165.232.41.73:51451
+        Command::Handshake { torrent, peer_addr } => {
+            let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
+            let t: Torrent = serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
+            let handshake_response = send_handshake(&peer_addr, &t.info_hash(), *b"00112233445566778899").await?;
+
+            eprintln!("{:?}", handshake_response);
+            let peer_id_hex = hex::encode(handshake_response.peer_id);
+            println!("Peer ID: {}", peer_id_hex);
+        }
+
+        // Usage: sh ./your_bittorrent.sh download_piece -o /tmp/test-piece-0 sample.torrent 0
+        Command::DownloadPiece { output, torrent, piece_index } => {
+            let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
+            let t: Torrent = serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
+
+            let peers = get_peers(
+                String::from("00112233445566778899"),
+                &t
+            ).await?;
+
+            let first_peer = &peers.0[0];
+            let peer_addr = format!("{}:{}", first_peer.ip(), first_peer.port());
+            
+            let mut peer_connection = peer::connect_to_peer(
+                &peer_addr,
+                &t.info_hash(),
+                *b"00112233445566778899"
+            ).await?;
+
+            eprintln!("Connected to peer: {}", peer_addr);
+
+            let piece = download_piece(&mut peer_connection, piece_index, &t.info).await?;
+
+            let mut file = File::create(output).await?;
+            file.write_all(&piece).await?;
+            eprintln!("Downloaded piece {}", piece_index);
+        }
+
+        // Usage: sh ./your_bittorrent.sh download -o /tmp/test.txt sample.torrent
+        Command::Download { output, torrent} => {
+            let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
+            let t: Torrent = serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
+
+            let peers = get_peers(
+                String::from("00112233445566778899"),
+                &t
+            ).await?;
+
+            let first_peer = &peers.0[0];
+            let peer_addr = format!("{}:{}", first_peer.ip(), first_peer.port());
+            
+            let mut peer_connection = peer::connect_to_peer(
+                &peer_addr,
+                &t.info_hash(),
+                *b"00112233445566778899"
+            ).await?;
+
+            eprintln!("Connected to peer: {}", peer_addr);
+
+            let file_vec = download_whole_file(&mut peer_connection, &t.info).await?;
+
+            let mut file = File::create(output).await?;
+            file.write_all(&file_vec).await?;
+            eprintln!("Downloaded file");
         }
     }
 
     Ok(())
 }
+
+
