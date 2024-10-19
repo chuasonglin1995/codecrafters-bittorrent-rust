@@ -47,7 +47,7 @@ pub struct Info {
     /// always a power of two, most commonly 2^18 = 256K (BitTorrent prior to version 3.2 uses 2^20 = 1M
     /// as default). 
     #[serde(rename = "piece length")]
-    pub plength: usize,
+    pub plength: u32,
 
     /// pieces maps to a string whose length is a multiple of 20. 
     /// concatenated SHA-1 hashes of each piece
@@ -65,7 +65,7 @@ pub struct Info {
 #[serde(untagged)]
 pub enum Keys {
     SingleFile {
-        length: usize,
+        length: u32,
     },
     MultiFile { 
         files: Vec<File> 
@@ -75,7 +75,7 @@ pub enum Keys {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct File {
     // the length of the file, in bytes
-    pub length: usize,
+    pub length: u32,
 
     // Subdirectory names for this file
     pub path:Vec<String>,

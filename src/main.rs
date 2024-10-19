@@ -1,9 +1,11 @@
 use anyhow::Context;
-use bittorrent_starter_rust::peer::send_handshake;
+use bittorrent_starter_rust::download::download_piece;
+use bittorrent_starter_rust::peer::{self, send_handshake};
 use bittorrent_starter_rust::torrent::{Keys, Torrent};
-use bittorrent_starter_rust::tracker::{TrackerRequest, TrackerResponse};
-use bittorrent_starter_rust::url_encode::url_encode;
+use bittorrent_starter_rust::tracker::get_peers;
 use clap::{Parser, Subcommand};
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 use core::panic;
 use serde_bencode;
 use std::path::PathBuf;
@@ -136,52 +138,21 @@ async fn main() -> anyhow::Result<()> {
         Command::Peers { torrent } => {
             let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
             let t: Torrent = serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
-            let length = if let Keys::SingleFile { length } = t.info.keys {
-                length
-            } else {
-                todo!()
-            };
-
-            let request = TrackerRequest {
-                peer_id: String::from("00112233445566778899"),
-                port: 6881,
-                uploaded: 0,
-                downloaded: 0,
-                left: length,
-                compact: 1
-            };
-            let url_params =
-                serde_urlencoded::to_string(&request).context("url-encode tracker parameters")?;
-
-            // put infohash here so that it wont get double url encoded
-            let tracker_url = format!(
-                "{}?{}&info_hash={}",
-                t.announce,
-                url_params,
-                &url_encode(&t.info_hash())
-            );
-
-            eprintln!("{tracker_url}");
-            let client = reqwest::blocking::Client::new();
-            let tracker_response = client
-                .get(tracker_url)
-                .send()
-                .context("send request to tracker")?
-                .bytes()
-                .context("convert response to bytes")?;
-
-            eprintln!("{:?}", tracker_response);
-            let response: TrackerResponse =
-                serde_bencode::from_bytes(&tracker_response).context("parse tracker response")?;
-            for peer in &response.peers.0 {
+            let peers = get_peers(
+                String::from("00112233445566778899"),
+                &t
+            ).await?;
+            for peer in &peers.0 {
                 println!("{}:{}", peer.ip(), peer.port());
             }
         }
 
+        // Usage: sh ./your_bittorrent.sh handshake sample.torrent <peer_ip>:<peer_port>
+        // E.g. sh ./your_bittorrent.sh handshake sample.torrent 165.232.41.73:51451
         Command::Handshake { torrent, peer_addr } => {
             let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
             let t: Torrent = serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
-            let handshake_response = send_handshake(&peer_addr, t.info_hash(), *b"00112233445566778899").await?;
+            let handshake_response = send_handshake(&peer_addr, &t.info_hash(), *b"00112233445566778899").await?;
 
             eprintln!("{:?}", handshake_response);
             let peer_id_hex = hex::encode(handshake_response.peer_id);
@@ -193,15 +164,31 @@ async fn main() -> anyhow::Result<()> {
             let dot_torrent = std::fs::read(torrent).context("read torrent file")?;
             let t: Torrent = serde_bencode::from_bytes(&dot_torrent).context("parse torrent file")?;
 
+            let peers = get_peers(
+                String::from("00112233445566778899"),
+                &t
+            ).await?;
 
-            // send handshake
-            // wait for bitfield messsage (5)
-            // send an interested message (2)
-            // wait until we receive an unchoke message (1)
-            // break the piece into blocks of 16kiB and send a request message for each block (6)
-            // wait for a piece message for each block you requested (7)
+            let first_peer = &peers.0[0];
+            let peer_addr = format!("{}:{}", first_peer.ip(), first_peer.port());
+            
+            let peer_connection = peer::connect_to_peer(
+                &peer_addr,
+                &t.info_hash(),
+                *b"00112233445566778899"
+            ).await?;
+
+            eprintln!("Connected to peer: {}", peer_addr);
+
+            let piece = download_piece(peer_connection, piece_index, &t.info).await?;
+
+            let mut file = File::create(output).await?;
+            file.write_all(&piece).await?;
+            eprintln!("Downloaded piece {}", piece_index);
         }
     }
 
     Ok(())
 }
+
+

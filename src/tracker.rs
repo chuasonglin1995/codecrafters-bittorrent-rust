@@ -1,6 +1,8 @@
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use peers::Peers;
+use crate::{torrent::{Keys, Torrent}, url_encode::url_encode};
 
 
 #[derive(Debug, Clone, Serialize)]
@@ -20,7 +22,7 @@ pub struct TrackerRequest {
 	/// the total amount downloaded so far
 	pub downloaded: usize,
 	/// the number of bytes left to download
-	pub left: usize,
+	pub left: u32,
 	/// whether the peer list should use the compact representation
 	/// The compact representation is more commonly used in the wild, the non-compact representation is mostly supported for backward-compatibility.
 	pub compact: u8
@@ -96,4 +98,51 @@ pub mod peers {
             serializer.serialize_bytes(&single_slice)
         }
     }
+}
+
+
+pub async fn get_peers(
+	own_peer_id: String,
+	torrent: &Torrent,
+) -> Result<Peers, anyhow::Error> {
+
+	let length = if let Keys::SingleFile { length } = torrent.info.keys {
+		length
+	} else {
+			todo!()
+	};
+
+	let request = TrackerRequest {
+		peer_id: own_peer_id,
+		port: 6881,
+		uploaded: 0,
+		downloaded: 0,
+		left: length,
+		compact: 1
+	};
+	let url_params =
+			serde_urlencoded::to_string(&request).context("url-encode tracker parameters")?;
+
+	// put infohash here so that it wont get double url encoded
+	let tracker_url = format!(
+			"{}?{}&info_hash={}",
+			torrent.announce,
+			url_params,
+			&url_encode(&torrent.info_hash())
+	);
+
+	eprintln!("{tracker_url}");
+	let client = reqwest::blocking::Client::new();
+	let tracker_response = client
+			.get(tracker_url)
+			.send()
+			.context("send request to tracker")?
+			.bytes()
+			.context("convert response to bytes")?;
+
+	eprintln!("{:?}", tracker_response);
+	let response: TrackerResponse =
+		serde_bencode::from_bytes(&tracker_response).context("parse tracker response")?;
+	
+	Ok(response.peers)
 }
